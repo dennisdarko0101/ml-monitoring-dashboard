@@ -31,12 +31,16 @@ from src.api.schemas import (
     ReportResponse,
     SystemHealthResponse,
 )
+import numpy as np
+
 from src.collectors.metrics_collector import MetricsCollector
 from src.collectors.prediction_logger import PredictionLogger
 from src.collectors.system_monitor import SystemMonitor
 from src.config.settings import settings
 from src.dashboard.charts import ChartGenerator
+from src.dashboard.page import render_dashboard_html
 from src.dashboard.reporter import ReportGenerator
+from src.demo.demo_data import DEMO_MODEL, get_demo_data
 from src.storage.database import Database
 from src.utils.logging import get_logger, setup_logging
 
@@ -75,6 +79,9 @@ async def lifespan(app: FastAPI):
     chart_generator = ChartGenerator()
     report_generator = ReportGenerator(metrics_collector, chart_generator)
 
+    if settings.DEMO_MODE:
+        await _seed_demo_data()
+
     logger.info("ml_monitor_ready")
     yield
 
@@ -86,12 +93,46 @@ async def lifespan(app: FastAPI):
     logger.info("ml_monitor_stopped")
 
 
+async def _seed_demo_data() -> None:
+    """Seed a synthetic demo model so the dashboard/API render with content.
+
+    The data is clearly-labeled sample data (see src/demo). It registers a demo
+    model and feeds the in-memory metrics collector a representative sample of
+    predictions so the metrics and dashboard endpoints are non-empty.
+    """
+    assert db is not None and metrics_collector is not None
+    if not await db.get_model_by_name(DEMO_MODEL):
+        await db.register_model(
+            {"name": DEMO_MODEL, "version": "1.0.0", "stage": "production"}
+        )
+
+    demo = get_demo_data()
+    rng = np.random.default_rng(7)
+    fraud_ratio = demo.pred_counts[1] / sum(demo.pred_counts)
+    sample_size = 2000
+    for _ in range(sample_size):
+        latency = float(max(1.0, rng.normal(demo.latency_p50[-1], 12.0)))
+        label = "fraud" if rng.random() < fraud_ratio else "legitimate"
+        is_error = rng.random() < 0.012
+        metrics_collector.record_prediction(
+            DEMO_MODEL, latency, prediction_label=label, is_error=is_error
+        )
+    logger.info("seeded_demo_data", model=DEMO_MODEL, predictions=sample_size)
+
+
 app = FastAPI(
     title="ML Monitoring Dashboard",
     description="Production ML observability platform",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page() -> HTMLResponse:
+    """Render the live dashboard (Plotly charts) as an HTML page."""
+    return HTMLResponse(render_dashboard_html())
 
 
 # --- Health ---
@@ -160,9 +201,29 @@ async def get_metrics(model_name: str, window: str = "1h"):
 async def get_drift_report(model_name: str):
     """Return the most recent drift analysis for a model.
 
-    Note: In a full deployment, drift detection runs periodically. This endpoint
-    returns a placeholder when no drift analysis has been run yet.
+    In demo mode this returns a drift report computed by the real drift detector
+    over synthetic reference/current distributions (see src/demo). Outside demo
+    mode, drift detection runs periodically in a full deployment; this returns an
+    empty report until an analysis has been run.
     """
+    if settings.DEMO_MODE:
+        report = get_demo_data().drift
+        return DriftReportResponse(
+            model_name=model_name,
+            overall_drift_score=report.overall_drift_score,
+            is_drifted=report.is_drifted,
+            drifted_features=report.drifted_features,
+            per_feature_scores=[
+                FeatureDriftResponse(
+                    feature=r.feature,
+                    drift_score=r.drift_score,
+                    method=r.method,
+                    p_value=r.p_value,
+                    is_drifted=r.is_drifted,
+                )
+                for r in report.per_feature_scores
+            ],
+        )
     return DriftReportResponse(
         model_name=model_name,
         overall_drift_score=0.0,

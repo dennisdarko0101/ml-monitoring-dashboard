@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Dashboard
     DASHBOARD_TITLE: str = "ML Monitoring Dashboard"
     DEFAULT_WINDOW_HOURS: int = 24
+    # When true, seed a synthetic demo model on startup and serve the demo drift
+    # report so the dashboard renders with content out of the box.
+    DEMO_MODE: bool = True
 
     # Server
     HOST: str = "0.0.0.0"

@@ -1,4 +1,4 @@
-version: "3.9"
+name: ml-monitoring-dashboard
 
 services:
   api:
@@ -6,10 +6,13 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     ports:
-      - "8000:8000"
+      # Host 8210 → container 8000. Distinct from llm-guardrails-safety (8100)
+      # and other local services so the stacks don't collide.
+      - "8210:8000"
     environment:
       - ML_MONITOR_DB_URL=sqlite+aiosqlite:///./data/ml_monitor.db
       - ML_MONITOR_LOG_LEVEL=INFO
+      - ML_MONITOR_DEMO_MODE=true
     volumes:
       - app_data:/app/data
     restart: unless-stopped
@@ -19,7 +22,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9090:9090"
+      - "9210:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -28,7 +31,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3210:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false

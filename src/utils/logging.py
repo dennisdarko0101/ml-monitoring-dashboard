@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+
 import structlog
 
 from src.config.settings import settings
+
+
+def _level_int(name: str) -> int:
+    """Resolve a log-level name (e.g. "INFO") to its integer value."""
+    level = logging.getLevelName(name.upper())
+    return level if isinstance(level, int) else logging.INFO
 
 
 def setup_logging() -> None:
@@ -21,7 +29,7 @@ def setup_logging() -> None:
             else structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(
-            structlog.get_level_from_name(settings.LOG_LEVEL)
+            _level_int(settings.LOG_LEVEL)
         ),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
